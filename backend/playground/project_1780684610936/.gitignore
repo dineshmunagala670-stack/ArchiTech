@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+.next/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log

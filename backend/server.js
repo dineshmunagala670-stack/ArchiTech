@@ -6,7 +6,6 @@ const fs = require('fs');
 const archiver = require('archiver');
 
 const { analyzePrompt } = require('./agents/architect');
-const { generateDockerFiles } = require('./agents/devops');
 const { generateCode } = require('./agents/codeWriter');
 
 const app = express();
@@ -23,7 +22,12 @@ if (!fs.existsSync(PLAYGROUND_DIR)) {
 }
 
 app.post("/api/generate", async (req, res) => {
-  const { prompt, useCustomLLM, llmApiKey, llmModelName } = req.body;
+  const { 
+    prompt, 
+    useLLM = false, 
+    apiKey = null 
+  } = req.body;
+  
   const logs = [];
 
   try {
@@ -31,39 +35,34 @@ app.post("/api/generate", async (req, res) => {
     currentProjectId = projectId;
     const projectDir = path.join(PLAYGROUND_DIR, projectId);
     
-    logs.push(`Step 1/4: Creating project directory: ${projectId}`);
-    if (!fs.existsSync(projectDir)) {
-      fs.mkdirSync(projectDir, { recursive: true });
-    }
+    logs.push(`Step 1/3: Creating project directory: ${projectId}`);
 
-    logs.push('Step 1/4: Analyzing prompt with Architect Agent...');
+    // Step 1: Analyze prompt with Architect
+    logs.push('Step 1/3: Analyzing prompt with Architect Agent...');
     const architectResult = analyzePrompt(prompt);
     logs.push(architectResult.message);
 
-    logs.push('Step 2/4: Scaffolding architecture...');
-    await new Promise(resolve => setTimeout(resolve, 800));
+    // Step 2: Scaffold architecture
+    logs.push('Step 2/3: Scaffolding architecture...');
+    await new Promise(resolve => setTimeout(resolve, 200));
 
-    logs.push('Step 3/4: Generating Docker configurations with DevOps Agent...');
-    const devopsResult = generateDockerFiles(architectResult.projectType, prompt);
-    logs.push(devopsResult.message);
-
-    logs.push('Step 4/4: Generating code files with Code Writer Agent...');
-    const codeResult = generateCode(architectResult.schema, projectDir, architectResult.projectType);
+    // Step 3: Generate code files with Code Writer (including optional LLM)
+    logs.push('Step 3/3: Generating code files with Code Writer Agent...');
+    if (useLLM && apiKey) {
+      logs.push('🧠 LLM mode enabled - will attempt Gemini injection for files');
+    }
+    
+    const codeResult = await generateCode(
+      architectResult.schema, 
+      projectDir, 
+      architectResult.language,
+      useLLM,
+      apiKey,
+      prompt
+    );
+    
     logs.push(...codeResult.logs);
     logs.push(codeResult.message);
-
-    // Handle custom LLM if enabled
-    if (useCustomLLM && llmApiKey) {
-      logs.push('🤖 Custom LLM integration: Feature placeholder (would use OpenAI/Anthropic API here)');
-    }
-
-    const dockerfilePath = path.join(projectDir, 'Dockerfile');
-    fs.writeFileSync(dockerfilePath, devopsResult.dockerfile);
-    logs.push('Created file: Dockerfile');
-
-    const composePath = path.join(projectDir, 'docker-compose.yml');
-    fs.writeFileSync(composePath, devopsResult.dockerCompose);
-    logs.push('Created file: docker-compose.yml');
 
     logs.push('✅ All steps completed! Project is ready.');
 
@@ -74,7 +73,6 @@ app.post("/api/generate", async (req, res) => {
       previewFileContent: codeResult.previewFileContent,
       result: {
         architect: architectResult,
-        devops: devopsResult,
         codeWriter: codeResult
       }
     });
@@ -147,22 +145,12 @@ app.get("/api/download/:projectId", async (req, res) => {
       return res.status(404).json({ success: false, message: 'Project not found' });
     }
 
-    // Set headers for download
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${projectId}.zip"`);
 
-    // Create archive
-    const archive = archiver('zip', {
-      zlib: { level: 9 } // Maximum compression
-    });
-
-    // Pipe archive to response
+    const archive = archiver('zip', { zlib: { level: 9 } });
     archive.pipe(res);
-
-    // Add project directory to archive
     archive.directory(projectDir, false);
-
-    // Finalize archive
     await archive.finalize();
   } catch (error) {
     console.error('Download error:', error);
@@ -171,5 +159,5 @@ app.get("/api/download/:projectId", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`ArchiTech Backend running on port ${PORT}`);
+  console.log(`🚀 ArchiTech Backend running on port ${PORT}`);
 });

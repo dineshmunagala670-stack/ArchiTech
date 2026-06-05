@@ -1,201 +1,61 @@
 const fs = require('fs');
 const path = require('path');
 
-const generateCode = (schema, outputDir, projectType) => {
+const generateCode = async (schema, outputDir, language, useLLM = false, apiKey = null, userPrompt = '') => {
   const logs = [];
   let previewFileContent = '';
+  let fileContentMap = { ...schema.fileContents }; // Start with default boilerplate
 
   try {
+    // Step 1: Create all directories from file paths
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
-      logs.push(`Created directory: ${outputDir}`);
+      logs.push(`Created root directory: ${outputDir}`);
     }
 
-    schema.folders.forEach((folder) => {
-      const folderPath = path.join(outputDir, folder);
-      if (!fs.existsSync(folderPath)) {
-        fs.mkdirSync(folderPath, { recursive: true });
-        logs.push(`Created folder: ${folder}`);
+    // Create directories for each file path
+    const files = Object.keys(fileContentMap);
+    files.forEach((file) => {
+      const dir = path.dirname(path.join(outputDir, file));
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        logs.push(`Created directory: ${path.relative(outputDir, dir)}`);
       }
     });
 
-    Object.keys(schema.files).forEach((file) => {
-      const filePath = path.join(outputDir, file);
-      let content = '';
-
-      if (file.endsWith('main.py')) {
-        content = `from fastapi import FastAPI
-from app.api import router
-from app.core.config import settings
-
-app = FastAPI(title="ArchiTech Generated App")
-
-app.include_router(router)
-
-@app.get("/")
-async def root():
-    return {"message": "Hello from ArchiTech!"}
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)`;
-        previewFileContent = content;
-      } else if (file.endsWith('config.py')) {
-        content = `from pydantic_settings import BaseSettings
-
-class Settings(BaseSettings):
-    app_name: str = "ArchiTech App"
-    redis_url: str = "redis://localhost:6379"
-    
-    class Config:
-        env_file = ".env"
-
-settings = Settings()`;
-      } else if (file.endsWith('api/__init__.py')) {
-        content = `from fastapi import APIRouter
-
-router = APIRouter()
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy"}`;
-      } else if (file.endsWith('requirements.txt')) {
-        content = `fastapi==0.109.0
-uvicorn==0.27.0
-pydantic-settings==2.1.0
-redis==5.0.1`;
-      } else if (file.endsWith('.env')) {
-        content = `APP_NAME=ArchiTech App
-REDIS_URL=redis://redis:6379`;
-      } else if (file.endsWith('server.js')) {
-        content = `const express = require('express');
-const cors = require('cors');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(cors());
-app.use(express.json());
-
-app.get("/", (req, res) => {
-  res.json({ message: "Hello from ArchiTech!" });
-});
-
-app.listen(PORT, () => {
-  console.log(\`Server running on port \${PORT}\`);
-});`;
-        previewFileContent = content;
-      } else if (file.endsWith('routes/index.js')) {
-        content = `const express = require('express');
-const router = express.Router();
-
-router.get("/health", (req, res) => {
-  res.json({ status: "healthy" });
-});
-
-module.exports = router;`;
-      } else if (file.endsWith('App.jsx')) {
-        content = `function App() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">Hello from ArchiTech!</h1>
-    </div>
-  );
-}
-
-export default App;`;
-        previewFileContent = content;
-      } else if (file.endsWith('main.jsx')) {
-        content = `import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App.jsx';
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);`;
-      } else if (file.endsWith('index.html')) {
-        content = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ArchiTech App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>`;
-      } else if (file.endsWith('package.json') && file.includes('src') === false) {
-        content = JSON.stringify({
-          name: "architech-generated-app",
-          version: "1.0.0",
-          scripts: {
-            dev: "vite",
-            build: "vite build",
-            preview: "vite preview",
-            start: "node src/server.js"
-          },
-          dependencies: {
-            react: "^18.2.0",
-            "react-dom": "^18.2.0",
-            express: "^4.18.2",
-            cors: "^2.8.5"
-          },
-          devDependencies: {
-            "@types/react": "^18.2.43",
-            "@types/react-dom": "^18.2.17",
-            "@vitejs/plugin-react": "^4.2.1",
-            vite: "^5.0.8"
-          }
-        }, null, 2);
-      } else if (file.endsWith('main.cpp')) {
-        content = `#include <iostream>
-
-int main() {
-  std::cout << "Hello from ArchiTech C++!" << std::endl;
-  return 0;
-}`;
-        previewFileContent = content;
-      } else if (file.endsWith('Makefile')) {
-        content = `CC=g++
-CFLAGS=-Wall -Wextra -std=c++17
-
-all: ArchiTechCppApp
-
-ArchiTechCppApp: src/main.cpp
-\t$(CC) $(CFLAGS) -o ArchiTechCppApp src/main.cpp
-
-clean:
-\trm -f ArchiTechCppApp`;
-      } else if (file.endsWith('README.md')) {
-        content = `# ArchiTech Generated Project
-
-This project was generated by ArchiTech.
-
-## Getting Started
-
-Follow the instructions below to run this project.`;
+    // Step 2: If LLM enabled, make a single Gemini API call
+    if (useLLM && apiKey) {
+      try {
+        logs.push('Making single Gemini API call for all files...');
+        const llmResult = await callGeminiForAllFiles(schema, language, userPrompt, apiKey);
+        if (llmResult) {
+          fileContentMap = { ...fileContentMap, ...llmResult };
+          logs.push('Successfully generated content via Gemini!');
+        }
+      } catch (llmError) {
+        logs.push(`Gemini API failed: ${llmError.message} - falling back to default boilerplate`);
       }
+    }
 
+    // Step 3: Write all files to disk
+    for (const file of Object.keys(fileContentMap)) {
+      const filePath = path.join(outputDir, file);
+      const content = fileContentMap[file] || '';
+      
       fs.writeFileSync(filePath, content);
       logs.push(`Created file: ${file}`);
-    });
 
-    // Add CMakeLists.txt for C++ projects
-    if (projectType === 'cpp') {
-      const cmakePath = path.join(outputDir, 'CMakeLists.txt');
-      const cmakeContent = `cmake_minimum_required(VERSION 3.10)
-project(ArchiTechCppApp)
-
-set(CMAKE_CXX_STANDARD 17)
-
-add_executable(ArchiTechCppApp src/main.cpp)
-`;
-      fs.writeFileSync(cmakePath, cmakeContent);
-      logs.push('Created file: CMakeLists.txt');
+      // Set preview file content (main file)
+      if (
+        file === 'src/server.js' ||
+        file === 'main.py' ||
+        file === 'src/main.cpp' ||
+        file === 'src/main.rs' ||
+        file === 'ArchiTechDotnetApi/Program.cs' ||
+        file === 'src/app/page.tsx'
+      ) {
+        previewFileContent = content;
+      }
     }
 
     return {
@@ -205,6 +65,7 @@ add_executable(ArchiTechCppApp src/main.cpp)
       message: 'Code Writer generated all files successfully'
     };
   } catch (error) {
+    logs.push(`Error: ${error.message}`);
     return {
       success: false,
       logs,
@@ -212,6 +73,75 @@ add_executable(ArchiTechCppApp src/main.cpp)
       message: 'Code Writer encountered an error'
     };
   }
+};
+
+// Single Gemini API call to generate all files
+const callGeminiForAllFiles = async (schema, language, userPrompt, apiKey) => {
+  const filePaths = Object.keys(schema.fileContents);
+  
+  const systemPrompt = `You are a senior software engineer generating production-ready code.
+
+USER PROJECT REQUIREMENTS: ${userPrompt}
+LANGUAGE/FRAMEWORK: ${language}
+
+YOU MUST RETURN A JSON OBJECT ONLY! NO OTHER TEXT!
+THE JSON KEYS MUST BE EXACT FILE PATHS, and the VALUES MUST BE THE FULL SOURCE CODE FOR EACH FILE.
+
+FILE PATHS TO GENERATE:
+${JSON.stringify(filePaths, null, 2)}
+
+IMPORTANT:
+- Return ONLY a valid JSON object, no other text
+- Do NOT include any markdown, no code block fences, no explanations
+- Use the EXACT file paths from the list above as keys
+- Make sure the code is complete and valid for the project type
+- No conversational text, just raw JSON!`;
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+  
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      contents: [
+        {
+          parts: [
+            { text: systemPrompt }
+          ]
+        }
+      ]
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gemini API HTTP error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  
+  if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || !data.candidates[0].content.parts || !data.candidates[0].content.parts[0]) {
+    throw new Error('Invalid response structure from Gemini API');
+  }
+
+  let rawText = data.candidates[0].content.parts[0].text.trim();
+  
+  // Clean up any potential markdown fences
+  if (rawText.startsWith('```json')) {
+    rawText = rawText.slice(7);
+  }
+  if (rawText.startsWith('```')) {
+    rawText = rawText.slice(3);
+  }
+  if (rawText.endsWith('```')) {
+    rawText = rawText.slice(0, -3);
+  }
+  rawText = rawText.trim();
+  
+  // Parse the JSON
+  const result = JSON.parse(rawText);
+  return result;
 };
 
 module.exports = { generateCode };
