@@ -19,6 +19,8 @@
     "@google/genai": "^2.8.0",
     "archiver": "^7.0.1",
     "cors": "^2.8.5",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "ollama": "^0.5.18",
+    "openai": "^4.104.0"
   }
 }
